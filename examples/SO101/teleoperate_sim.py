@@ -74,8 +74,8 @@ class SimulationHAL(RobotHAL):
             print("MuJoCo simulation started (headless mode).")
         else:
             # GUI mode - launch viewer
-            import mujoco.viewer
-            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            from mujoco import viewer as mj_viewer
+            self.viewer = mj_viewer.launch_passive(self.model, self.data)
             self.viewer.cam.azimuth = 45
             self.viewer.cam.elevation = -45
             self.viewer.cam.distance = 1.0
