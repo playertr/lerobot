@@ -87,9 +87,13 @@ class TeleoperationController:
         speed, rot_speed = cfg.move_speed, cfg.rot_speed
         world_from_ee = pt.transform_from(R=self.ee_orientation.as_matrix(), p=self.ee_position)
         
-        # Forward/back along EE Z-axis
-        local_z = np.array([0, 0, -gamepad.left_y * speed * dt])
-        self.ee_position += self._transform_direction(world_from_ee, local_z)
+        # RB/LB bumpers for forward/back along EE Z-axis (half speed for fine control)
+        if gamepad.right_bumper:
+            local_z = np.array([0, 0, speed * 0.5 * dt])
+            self.ee_position += self._transform_direction(world_from_ee, local_z)
+        if gamepad.left_bumper:
+            local_z = np.array([0, 0, -speed * 0.5 * dt])
+            self.ee_position += self._transform_direction(world_from_ee, local_z)
         
         # Arc sweep around shoulder
         arc_rate = gamepad.left_x * rot_speed * dt
@@ -108,13 +112,9 @@ class TeleoperationController:
         roll = gamepad.right_x * rot_speed * dt
         self.ee_orientation = self.ee_orientation * Rotation.from_euler('zy', [roll, pitch])
         
-        # D-pad vertical
-        if gamepad.dpad_up:
-            local_up = np.array([-speed * dt, 0, 0])
-            self.ee_position += self._transform_direction(world_from_ee, local_up)
-        if gamepad.dpad_down:
-            local_down = np.array([speed * dt, 0, 0])
-            self.ee_position += self._transform_direction(world_from_ee, local_down)
+        # Left stick Y for vertical
+        local_up = np.array([gamepad.left_y * speed * dt, 0, 0])
+        self.ee_position += self._transform_direction(world_from_ee, local_up)
         
         self._constrain_orientation()
     
@@ -207,7 +207,7 @@ class TeleoperationController:
                 current_joint_pos=current,
                 desired_ee_pose=desired_pose,
                 position_weight=1.0,
-                orientation_weight=1.0,
+                orientation_weight=0.1,  # Lower weight to prioritize position accuracy
             )
         except Exception as e:
             print(f"IK failed: {e}")

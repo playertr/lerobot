@@ -82,6 +82,8 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        max_iterations: int = 100,
+        tolerance: float = 0.005,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -91,6 +93,8 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            max_iterations: Maximum number of IK solver iterations
+            tolerance: Position error tolerance in meters for early termination
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -109,9 +113,23 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Iterate solver multiple times for convergence
+        target_pos = desired_ee_pose[:3, 3]
+        pos_error = float('inf')
+        for iteration in range(max_iterations):
+            self.solver.solve(True)
+            self.robot.update_kinematics()
+            
+            # Check convergence
+            achieved_pose = self.robot.get_T_world_frame(self.target_frame_name)
+            pos_error = np.linalg.norm(achieved_pose[:3, 3] - target_pos)
+            if pos_error < tolerance:
+                break
+        
+        # Warn if failed to converge (but still return best effort)
+        if pos_error >= tolerance and pos_error > 0.02:  # Only warn for errors > 2cm
+            import warnings
+            warnings.warn(f"IK did not converge: error={pos_error:.4f}m after {iteration+1} iterations", stacklevel=2)
 
         # Extract joint positions
         joint_pos_rad = []

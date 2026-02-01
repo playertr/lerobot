@@ -4,20 +4,20 @@ Gamepad teleoperation for SO101 robot arm.
 Usage:
     mjpython teleoperate.py                    # Simulation (default)
     mjpython teleoperate.py --sim=False        # Real robot
-    mjpython teleoperate.py --remote=True      # Remote control via web UI
+    mjpython teleoperate.py --remote=True      # Remote control via web UI (mobile-friendly)
 
 Controls:
     X Button:        Toggle CLUTCH (enable/disable motion)
-    Left Stick:      Forward/back + Arc sweep around base
+    Left Stick X:    Arc sweep around base
+    Left Stick Y:    Move up/down
     Right Stick:     Pitch + Roll
-    D-pad Up/Down:   Move up/down
+    LB/RB:           Peck forward/back along EE Z-axis
     LT/RT:           Open/close gripper
-    B Button:        Exit
 
 Requirements:
     macOS: pip install hidapi
     Linux: pip install pygame
-    Remote: pip install websockets
+    Remote: pip install websockets pillow
 """
 
 import time
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import draccus
-import rerun as rr
+import numpy as np
 
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.robot_utils import precise_sleep
@@ -44,9 +44,8 @@ class TeleoperateConfig:
     
     # Remote control
     remote: bool = False
-    web_host: str = "localhost"  # Use LAN IP for network access
+    web_host: str = "localhost"  # Use 0.0.0.0 for LAN access
     web_port: int = 8888
-    rerun_port: int = 9090
     
     # Model paths (relative to this file)
     urdf_path: str = "so101_new_calib.urdf"
@@ -81,13 +80,16 @@ class TeleoperateConfig:
 
 def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
                      teleop: TeleoperationController, kinematics_solver: RobotKinematics,
-                     visualizer: RerunVisualizer, camera=None):
+                     visualizer, camera=None, web_server=None):
     """Main teleoperation control loop."""
     target_dt = 1.0 / cfg.control_fps
+    stream_interval = 1.0 / 15  # Stream at 15 FPS for web
+    last_stream_time = 0
     
     robot_obs = robot.get_observation()
     teleop.initialize_from_observation(robot_obs)
-    visualizer.init_visualization()
+    if visualizer:
+        visualizer.init_visualization()
     
     print("\nPress X to enable CLUTCH, then use the gamepad to move the robot.\n")
     
@@ -100,9 +102,6 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
             last_time = t0
             
             gamepad.update()
-            if gamepad.button_b:
-                print("\nExit requested.")
-                break
             
             robot_obs = robot.get_observation()
             joint_action = teleop.update(gamepad, actual_dt, current_joint_obs=robot_obs)
@@ -111,14 +110,28 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
                 robot.send_action(joint_action)
             
             target_pos, target_rot = teleop.get_ee_pose()
-            obs_pos, obs_rot = visualizer.get_observed_ee_pose(kinematics_solver, robot_obs)
-            if obs_pos is None:
-                obs_pos, obs_rot = target_pos, target_rot
             
-            robot.render_ee_frames(target_pos, target_rot, obs_pos, obs_rot)
+            robot.render_ee_frames(target_pos, target_rot, target_pos, target_rot)
             
             camera_image = camera.get_latest_frame() if camera else None
-            visualizer.log_frame(teleop, kinematics_solver, robot_obs, joint_action, gamepad, camera_image)
+            
+            # Stream to web clients (at reduced rate)
+            if web_server and t0 - last_stream_time >= stream_interval:
+                last_stream_time = t0
+                # Stream camera image
+                if camera_image is not None:
+                    rotated = np.rot90(camera_image, k=-1)
+                    web_server.send_camera_frame(rotated, quality=60)
+                # Stream joint positions for 3D visualization
+                if robot_obs:
+                    joint_positions = {k.replace('.pos', ''): v for k, v in robot_obs.items() if k.endswith('.pos')}
+                    web_server.send_joint_positions(joint_positions)
+                # Stream EE target pose for visualization
+                web_server.send_ee_state(target_pos, target_rot, teleop.clutch_enabled)
+            
+            # Log to Rerun (local visualization only in non-remote mode)
+            if visualizer:
+                visualizer.log_frame(teleop, kinematics_solver, robot_obs, joint_action, gamepad, camera_image)
             
             robot.step()
             
@@ -154,8 +167,8 @@ def main(cfg: TeleoperateConfig):
         web_server = WebTeleoperationServer(
             host=host,
             web_port=cfg.web_port,
-            rerun_port=cfg.rerun_port,
-            display_host=display_host
+            display_host=display_host,
+            urdf_path=cfg.urdf_path
         )
         web_server.start()
         
@@ -200,22 +213,16 @@ def main(cfg: TeleoperateConfig):
         joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"],
     )
     
-    # Controller & Visualizer
+    # Controller
     teleop = TeleoperationController(cfg, kinematics_solver)
-    visualizer = RerunVisualizer(str(urdf_path), compress_images=cfg.remote, minimal=cfg.remote)
     
-    # Initialize Rerun (serve over WebSocket for remote, spawn viewer locally)
-    if cfg.remote:
-        rr.init("gamepad_so101_teleop")
-        # Start gRPC server with minimal blueprint, connect web viewer to it
-        blueprint = visualizer.get_blueprint()
-        server_uri = rr.serve_grpc(grpc_port=cfg.rerun_port, default_blueprint=blueprint)
-        rr.serve_web_viewer(connect_to=server_uri, web_port=cfg.rerun_port + 1, open_browser=False)
-        print(f"[Rerun] gRPC server on {server_uri}")
-        print(f"[Rerun] Web viewer at http://{cfg.web_host}:{cfg.rerun_port + 1}")
-    else:
+    # Visualizer (Rerun for local mode only)
+    visualizer = None
+    if not cfg.remote:
+        import rerun as rr
         from lerobot.utils.visualization_utils import init_rerun
         init_rerun(session_name="gamepad_so101_teleop")
+        visualizer = RerunVisualizer(str(urdf_path))
     
     # Robot HAL
     if cfg.sim:
@@ -232,7 +239,7 @@ def main(cfg: TeleoperateConfig):
         return
     
     try:
-        run_control_loop(cfg, robot, gamepad, teleop, kinematics_solver, visualizer, camera)
+        run_control_loop(cfg, robot, gamepad, teleop, kinematics_solver, visualizer, camera, web_server)
     finally:
         robot.disconnect()
         if hasattr(gamepad, 'disconnect'):

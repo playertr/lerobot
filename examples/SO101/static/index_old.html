@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SO101 Remote Control</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: #16213e;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #0f3460;
+        }
+        
+        h1 {
+            font-size: 1.4em;
+            font-weight: 500;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+        
+        .status-dot.connected {
+            background: #44ff44;
+        }
+        
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .view-panel {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: row;
+        }
+        
+        .view-pane {
+            flex: 1;
+            min-width: 0;
+            position: relative;
+        }
+        
+        #robotView {
+            background: #1a1a2e;
+            border-right: 1px solid #0f3460;
+        }
+        
+        #robotCanvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #cameraView {
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #cameraImage {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        .no-camera {
+            color: #666;
+            font-size: 1.2em;
+        }
+        
+        .controls-panel {
+            width: 320px;
+            background: #16213e;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            border-left: 1px solid #0f3460;
+            overflow-y: auto;
+        }
+        
+        .control-section {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        
+        .control-section h3 {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Bumpers row (above joysticks) */
+        .bumpers-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+        
+        .bumper-btn {
+            flex: 1;
+            padding: 14px 8px;
+            background: #0f3460;
+            border: 2px solid #1a4a7a;
+            border-radius: 8px;
+            color: #eee;
+            font-size: 0.85em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.1s;
+            touch-action: manipulation;
+        }
+        
+        .bumper-btn:hover {
+            background: #1a4a7a;
+        }
+        
+        .bumper-btn:active, .bumper-btn.active {
+            background: #e94560;
+            border-color: #e94560;
+            transform: scale(0.97);
+        }
+        
+        /* Virtual Joystick */
+        .joystick-container {
+            display: flex;
+            justify-content: space-around;
+            gap: 16px;
+        }
+        
+        .joystick-wrapper {
+            text-align: center;
+        }
+        
+        .joystick-label {
+            font-size: 0.75em;
+            color: #666;
+            margin-bottom: 6px;
+        }
+        
+        .joystick {
+            width: 120px;
+            height: 120px;
+            background: #0f3460;
+            border-radius: 50%;
+            position: relative;
+            touch-action: none;
+        }
+        
+        .joystick-knob {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(145deg, #e94560, #c73e54);
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        .joystick-knob:active {
+            cursor: grabbing;
+        }
+        
+        /* Triggers */
+        .triggers-container {
+            display: flex;
+            justify-content: space-around;
+            gap: 16px;
+        }
+        
+        .trigger-wrapper {
+            text-align: center;
+            flex: 1;
+        }
+        
+        .trigger-label {
+            font-size: 0.75em;
+            color: #666;
+            margin-bottom: 6px;
+        }
+        
+        .trigger {
+            width: 100%;
+            height: 60px;
+            background: #0f3460;
+            border-radius: 8px;
+            position: relative;
+            touch-action: none;
+            overflow: hidden;
+        }
+        
+        .trigger-fill {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, #e94560, #c73e54);
+            transition: height 0.05s;
+        }
+        
+        .trigger-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.8em;
+            font-weight: bold;
+            z-index: 1;
+        }
+        
+        /* Buttons */
+        .buttons-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        
+        .btn {
+            padding: 12px 8px;
+            background: #0f3460;
+            border: none;
+            border-radius: 6px;
+            color: #eee;
+            font-size: 0.75em;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+        
+        .btn:hover {
+            background: #1a4a7a;
+        }
+        
+        .btn:active, .btn.active {
+            background: #e94560;
+            transform: scale(0.95);
+        }
+        
+        /* Gamepad Status */
+        .gamepad-info {
+            font-size: 0.8em;
+            color: #888;
+            text-align: center;
+        }
+        
+        .gamepad-info.active {
+            color: #44ff44;
+        }
+        
+        /* Debug values */
+        .debug-values {
+            font-family: monospace;
+            font-size: 0.7em;
+            color: #666;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+        
+        /* Mobile responsive */
+        @media (max-width: 900px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .controls-panel {
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid #0f3460;
+            }
+            
+            .view-panel {
+                height: 50vh;
+                flex-direction: column;
+            }
+            
+            #robotView {
+                border-right: none;
+                border-bottom: 1px solid #0f3460;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🤖 SO101 Remote Control</h1>
+        <div class="status">
+            <span id="statusText">Disconnected</span>
+            <div class="status-dot" id="statusDot"></div>
+        </div>
+    </header>
+    
+    <div class="main-container">
+        <div class="view-panel">
+            <div class="view-pane" id="robotView">
+                <canvas id="robotCanvas"></canvas>
+            </div>
+            <div class="view-pane" id="cameraView">
+                <img id="cameraImage" src="" alt="Camera feed">
+                <span class="no-camera" id="noCameraText">Waiting for camera...</span>
+            </div>
+        </div>
+        
+        <div class="controls-panel">
+            <div class="control-section">
+                <h3>Physical Gamepad</h3>
+                <p class="gamepad-info" id="gamepadInfo">Press any button to connect gamepad</p>
+            </div>
+            
+            <div class="control-section">
+                <h3>Virtual Joysticks</h3>
+                <div class="bumpers-row">
+                    <button class="bumper-btn" id="bumperLB" data-btn="button_lb">LB (Peck In)</button>
+                    <button class="bumper-btn" id="bumperRB" data-btn="button_rb">RB (Peck Out)</button>
+                </div>
+                <div class="joystick-container">
+                    <div class="joystick-wrapper">
+                        <div class="joystick-label">Position (XY)</div>
+                        <div class="joystick" id="leftJoystick">
+                            <div class="joystick-knob" id="leftKnob"></div>
+                        </div>
+                    </div>
+                    <div class="joystick-wrapper">
+                        <div class="joystick-label">Orientation</div>
+                        <div class="joystick" id="rightJoystick">
+                            <div class="joystick-knob" id="rightKnob"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>Triggers (Gripper)</h3>
+                <div class="triggers-container">
+                    <div class="trigger-wrapper">
+                        <div class="trigger-label">Open (LT)</div>
+                        <div class="trigger" id="leftTrigger">
+                            <div class="trigger-fill" id="leftTriggerFill"></div>
+                            <span class="trigger-value" id="leftTriggerValue">0%</span>
+                        </div>
+                    </div>
+                    <div class="trigger-wrapper">
+                        <div class="trigger-label">Close (RT)</div>
+                        <div class="trigger" id="rightTrigger">
+                            <div class="trigger-fill" id="rightTriggerFill"></div>
+                            <span class="trigger-value" id="rightTriggerValue">0%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>Buttons</h3>
+                <div class="buttons-grid">
+                    <button class="btn" id="btnX" data-btn="button_x">X<br><small>Clutch</small></button>
+                    <button class="btn" id="btnA" data-btn="button_a">A</button>
+                    <button class="btn" id="btnB" data-btn="button_b">B</button>
+                    <button class="btn" id="btnY" data-btn="button_y">Y</button>
+                    <button class="btn" id="btnLB" data-btn="button_lb">LB<br><small>-Z</small></button>
+                    <button class="btn" id="btnRB" data-btn="button_rb">RB<br><small>+Z</small></button>
+                    <button class="btn" id="btnUp" data-btn="dpad_up">↑</button>
+                    <button class="btn" id="btnDown" data-btn="dpad_down">↓</button>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>Debug - Inputs</h3>
+                <div class="debug-values" id="debugValues">
+                    <span>LX: 0.00</span>
+                    <span>LY: 0.00</span>
+                    <span>RX: 0.00</span>
+                    <span>RY: 0.00</span>
+                    <span>LT: 0.00</span>
+                    <span>RT: 0.00</span>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>Debug - EE State (from server)</h3>
+                <div class="debug-values" id="eeDebugValues" style="font-family: monospace; font-size: 11px;">
+                    <span>Clutch: OFF</span>
+                    <span>Target: [-.---, -.---, -.---]</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js and URDF loader from CDN -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "urdf-loader": "https://unpkg.com/urdf-loader@0.12.6/src/URDFLoader.js"
+        }
+    }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import URDFLoader from 'urdf-loader';
+        
+        // Make STLLoader available globally for URDFLoader
+        window.STLLoader = STLLoader;
+        
+        // Configuration (injected by server)
+        const CONFIGURED_WS_URL = "{{WS_URL}}";
+        const URDF_PATH = "{{URDF_PATH}}";
+        
+        // Compute actual WebSocket URL - use same host as page to avoid cross-origin issues
+        function getWebSocketURL() {
+            // If page is loaded from same host as configured, use configured URL
+            const configuredHost = new URL(CONFIGURED_WS_URL).hostname;
+            const pageHost = window.location.hostname;
+            
+            // If hosts match or page is localhost, use configured URL
+            if (configuredHost === pageHost || pageHost === 'localhost' || pageHost === '127.0.0.1') {
+                return CONFIGURED_WS_URL;
+            }
+            
+            // Otherwise, construct URL using the page's host (for Tailscale, etc.)
+            const wsPort = new URL(CONFIGURED_WS_URL).port;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const newUrl = `${protocol}//${pageHost}:${wsPort}`;
+            console.log(`[WS] Using page host instead of configured: ${newUrl} (page=${pageHost}, configured=${configuredHost})`);
+            return newUrl;
+        }
+        
+        const WS_URL = getWebSocketURL();
+        
+        // State
+        let ws = null;
+        let connected = false;
+        let physicalGamepad = null;
+        let gamepadIndex = -1;
+        let robot = null;
+        let jointPositions = {};
+        let eeTargetMarker = null;
+        let eeAxesHelper = null;
+        let serverEEState = { target_pos: null, target_rot: null, clutch: false };
+        
+        const state = {
+            left_x: 0,
+            left_y: 0,
+            right_x: 0,
+            right_y: 0,
+            left_trigger: 0,
+            right_trigger: 0,
+            button_a: false,
+            button_b: false,
+            button_x: false,
+            button_y: false,
+            button_lb: false,
+            button_rb: false,
+            dpad_up: false,
+            dpad_down: false,
+            dpad_left: false,
+            dpad_right: false,
+        };
+        
+        // Virtual joystick state
+        const virtualState = {
+            left_x: 0,
+            left_y: 0,
+            right_x: 0,
+            right_y: 0,
+            left_trigger: 0,
+            right_trigger: 0,
+        };
+        
+        // DOM elements
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const gamepadInfo = document.getElementById('gamepadInfo');
+        const debugValues = document.getElementById('debugValues');
+        const cameraImage = document.getElementById('cameraImage');
+        const noCameraText = document.getElementById('noCameraText');
+        
+        // Three.js setup
+        let scene, camera3d, renderer, controls;
+        
+        function initThreeJS() {
+            const canvas = document.getElementById('robotCanvas');
+            const container = document.getElementById('robotView');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+            
+            // Camera - positioned for Z-up coordinate system (matching MuJoCo/URDF)
+            camera3d = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.01, 10);
+            camera3d.up.set(0, 0, 1);  // Z is up
+            camera3d.position.set(0.5, -0.4, 0.4);  // View from front-right, elevated
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            
+            // Controls
+            controls = new OrbitControls(camera3d, renderer.domElement);
+            controls.target.set(0.15, 0, 0.15);  // Look at robot workspace center
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.update();
+            
+            // Lights
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+            
+            const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+            directional.position.set(1, 2, 1);
+            directional.castShadow = true;
+            scene.add(directional);
+            
+            // Ground grid - rotate to XY plane for Z-up coordinate system
+            const grid = new THREE.GridHelper(1, 20, 0x444444, 0x333333);
+            grid.rotation.x = Math.PI / 2;  // Rotate from XZ to XY plane
+            scene.add(grid);
+            
+            // Axes helper at origin
+            const axes = new THREE.AxesHelper(0.1);
+            scene.add(axes);
+            
+            // Create EE target marker (sphere + axes)
+            createEEMarker();
+            
+            // Load URDF
+            loadURDF();
+            
+            // Handle resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Initial resize after a brief delay to ensure layout is ready
+            setTimeout(onWindowResize, 100);
+            
+            // Animation loop
+            animate();
+        }
+        
+        function loadURDF() {
+            const loader = new URDFLoader();
+            
+            // Custom mesh loader for STL files
+            const stlLoader = new STLLoader();
+            loader.loadMeshCb = (path, manager, onComplete) => {
+                stlLoader.load(
+                    path,
+                    (geometry) => {
+                        const material = new THREE.MeshPhongMaterial({
+                            color: 0xffd700,  // Yellow for 3D printed parts
+                            shininess: 30,
+                        });
+                        const mesh = new THREE.Mesh(geometry, material);
+                        mesh.castShadow = true;
+                        mesh.receiveShadow = true;
+                        onComplete(mesh);
+                    },
+                    undefined,
+                    (err) => {
+                        console.error('Failed to load mesh:', path, err);
+                        onComplete(null, err);
+                    }
+                );
+            };
+            
+            loader.load(URDF_PATH, (loadedRobot) => {
+                robot = loadedRobot;
+                
+                // No rotation needed - URDF is Z-up, we display in Z-up
+                
+                scene.add(robot);
+                console.log('URDF loaded:', robot);
+                console.log('Joints:', Object.keys(robot.joints));
+            }, 
+            undefined,
+            (err) => {
+                console.error('Failed to load URDF:', err);
+            });
+        }
+        
+        function updateRobotJoints(positions) {
+            if (!robot) return;
+            
+            // SO101 joints rotate around Z axis (in URDF frame)
+            // Convert degrees to radians
+            for (const [joint, degrees] of Object.entries(positions)) {
+                if (robot.joints[joint]) {
+                    robot.joints[joint].setJointValue(degrees * Math.PI / 180);
+                }
+            }
+        }
+        
+        function createEEMarker() {
+            // Create a group to hold the EE marker
+            eeTargetMarker = new THREE.Group();
+            
+            // Sphere at target position
+            const sphereGeom = new THREE.SphereGeometry(0.015, 16, 16);
+            const sphereMat = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,  // Green when clutch off
+                transparent: true,
+                opacity: 0.8
+            });
+            const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+            sphere.name = 'eeMarkerSphere';
+            eeTargetMarker.add(sphere);
+            
+            // Axes helper for orientation (smaller than origin)
+            eeAxesHelper = new THREE.AxesHelper(0.05);
+            eeTargetMarker.add(eeAxesHelper);
+            
+            // Initially hidden until we get data
+            eeTargetMarker.visible = false;
+            scene.add(eeTargetMarker);
+        }
+        
+        function updateEEVisualization(pos, rot, clutchEnabled) {
+            if (!eeTargetMarker || !pos || !rot) return;
+            
+            // Position: Both MuJoCo and our Three.js scene use Z-up, so direct mapping
+            eeTargetMarker.position.set(pos[0], pos[1], pos[2]);
+            
+            // Rotation: Python sends row-major 3x3 matrix [[r00,r01,r02],[r10,r11,r12],[r20,r21,r22]]
+            // Three.js Matrix4.set() is ROW-major: (r0c0, r0c1, r0c2, r0c3, r1c0, ...)
+            const rotMat = new THREE.Matrix4();
+            rotMat.set(
+                rot[0][0], rot[0][1], rot[0][2], 0,
+                rot[1][0], rot[1][1], rot[1][2], 0,
+                rot[2][0], rot[2][1], rot[2][2], 0,
+                0, 0, 0, 1
+            );
+            
+            // Extract rotation
+            eeTargetMarker.quaternion.setFromRotationMatrix(rotMat);
+            
+            // Change sphere color based on clutch state
+            const sphere = eeTargetMarker.getObjectByName('eeMarkerSphere');
+            if (sphere) {
+                sphere.material.color.setHex(clutchEnabled ? 0xff0000 : 0x00ff00);  // Red when active, green when off
+            }
+            
+            eeTargetMarker.visible = true;
+        }
+        
+        function updateEEDebugDisplay(pos, clutchEnabled) {
+            const eeDebugEl = document.getElementById('eeDebugValues');
+            if (eeDebugEl && pos) {
+                eeDebugEl.innerHTML = `
+                    <span style="color: ${clutchEnabled ? '#ff6666' : '#66ff66'}">Clutch: ${clutchEnabled ? 'ON' : 'OFF'}</span>
+                    <span>Target: [${pos[0].toFixed(3)}, ${pos[1].toFixed(3)}, ${pos[2].toFixed(3)}]</span>
+                `;
+            }
+        }
+        
+        function onWindowResize() {
+            const container = document.getElementById('robotView');
+            camera3d.aspect = container.clientWidth / container.clientHeight;
+            camera3d.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera3d);
+        }
+        
+        // Reconnection state
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_DELAY = 10000; // Max 10 seconds between attempts
+        
+        function getReconnectDelay() {
+            // Exponential backoff: 1s, 2s, 4s, 8s, 10s (capped)
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+            return delay;
+        }
+        
+        function scheduleReconnect() {
+            const delay = getReconnectDelay();
+            reconnectAttempts++;
+            statusText.textContent = `Reconnecting in ${Math.round(delay/1000)}s... (attempt ${reconnectAttempts})`;
+            console.log(`WebSocket reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+            setTimeout(connect, delay);
+        }
+        
+        // Connect to WebSocket
+        function connect() {
+            // Close existing connection if any
+            if (ws) {
+                ws.onclose = null; // Prevent triggering reconnect
+                ws.onerror = null;
+                if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                    ws.close();
+                }
+            }
+            
+            statusText.textContent = 'Connecting...';
+            console.log('WebSocket connecting to:', WS_URL);
+            
+            try {
+                ws = new WebSocket(WS_URL);
+                ws.binaryType = 'arraybuffer';
+            } catch (e) {
+                console.error('WebSocket creation failed:', e);
+                scheduleReconnect();
+                return;
+            }
+            
+            ws.onopen = () => {
+                connected = true;
+                reconnectAttempts = 0; // Reset on successful connection
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Connected';
+                console.log('WebSocket connected');
+            };
+            
+            ws.onmessage = (event) => {
+                // Check if binary (JPEG image) or text (JSON)
+                if (event.data instanceof ArrayBuffer) {
+                    // Binary: JPEG image
+                    const blob = new Blob([event.data], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    cameraImage.onload = () => URL.revokeObjectURL(url);
+                    cameraImage.src = url;
+                    noCameraText.style.display = 'none';
+                    cameraImage.style.display = 'block';
+                } else {
+                    // Text: JSON message
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'joints') {
+                            jointPositions = data.positions;
+                            updateRobotJoints(jointPositions);
+                        } else if (data.type === 'ee_state') {
+                            serverEEState = {
+                                target_pos: data.target_pos,
+                                target_rot: data.target_rot,
+                                clutch: data.clutch
+                            };
+                            updateEEVisualization(data.target_pos, data.target_rot, data.clutch);
+                            updateEEDebugDisplay(data.target_pos, data.clutch);
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse message:', e);
+                    }
+                }
+            };
+            
+            ws.onclose = (event) => {
+                connected = false;
+                statusDot.classList.remove('connected');
+                console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
+                scheduleReconnect();
+            };
+            
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                console.log('[WS] Connection attempted to:', WS_URL);
+                console.log('[WS] Page loaded from:', window.location.origin);
+                if (window.location.protocol === 'https:' && WS_URL.startsWith('ws://')) {
+                    console.error('[WS] SECURITY ERROR: Cannot connect to ws:// from https:// page. The server needs wss:// support.');
+                }
+                // Don't schedule reconnect here - onclose will be called after onerror
+            };
+        }
+        
+        // Debug: track sent messages
+        let sendCounter = 0;
+        
+        // Send state to server
+        function sendState() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Log every 60th message (once per second at 60Hz)
+                if (sendCounter % 60 === 0) {
+                    console.log('[SEND] Gamepad state:', JSON.stringify(state));
+                }
+                sendCounter++;
+                
+                ws.send(JSON.stringify({
+                    type: 'gamepad',
+                    state: state
+                }));
+            }
+        }
+        
+        // Virtual Joystick handling
+        function setupJoystick(joystickEl, knobEl, onMove, xKey, yKey) {
+            let active = false;
+            const rect = () => joystickEl.getBoundingClientRect();
+            const radius = 60; // Half of joystick size
+            const knobRadius = 25; // Half of knob size
+            const maxDist = radius - knobRadius;
+            
+            function updatePosition(clientX, clientY) {
+                const r = rect();
+                const centerX = r.left + r.width / 2;
+                const centerY = r.top + r.height / 2;
+                
+                let dx = clientX - centerX;
+                let dy = clientY - centerY;
+                
+                // Clamp to circle
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+                
+                // Update knob position
+                knobEl.style.left = `calc(50% + ${dx}px)`;
+                knobEl.style.top = `calc(50% + ${dy}px)`;
+                
+                // Normalize to -1 to 1
+                const normX = dx / maxDist;
+                const normY = dy / maxDist;
+                
+                virtualState[xKey] = normX;
+                virtualState[yKey] = normY;
+                onMove(normX, normY);
+            }
+            
+            function reset() {
+                knobEl.style.left = '50%';
+                knobEl.style.top = '50%';
+                virtualState[xKey] = 0;
+                virtualState[yKey] = 0;
+                onMove(0, 0);
+            }
+            
+            // Mouse events
+            joystickEl.addEventListener('mousedown', (e) => {
+                active = true;
+                updatePosition(e.clientX, e.clientY);
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (active) updatePosition(e.clientX, e.clientY);
+            });
+            
+            document.addEventListener('mouseup', () => {
+                if (active) {
+                    active = false;
+                    reset();
+                }
+            });
+            
+            // Touch events
+            joystickEl.addEventListener('touchstart', (e) => {
+                active = true;
+                const touch = e.touches[0];
+                updatePosition(touch.clientX, touch.clientY);
+                e.preventDefault();
+            });
+            
+            document.addEventListener('touchmove', (e) => {
+                if (active) {
+                    const touch = e.touches[0];
+                    updatePosition(touch.clientX, touch.clientY);
+                }
+            });
+            
+            document.addEventListener('touchend', () => {
+                if (active) {
+                    active = false;
+                    reset();
+                }
+            });
+        }
+        
+        // Virtual trigger handling
+        function setupTrigger(triggerEl, fillEl, valueEl, stateKey) {
+            let active = false;
+            
+            function updateValue(clientY) {
+                const rect = triggerEl.getBoundingClientRect();
+                const relY = rect.bottom - clientY;
+                const value = Math.max(0, Math.min(1, relY / rect.height));
+                
+                fillEl.style.height = `${value * 100}%`;
+                valueEl.textContent = `${Math.round(value * 100)}%`;
+                virtualState[stateKey] = value;
+                
+                // Update main state if no physical gamepad
+                if (gamepadIndex < 0) {
+                    state[stateKey] = value;
+                }
+            }
+            
+            function reset() {
+                fillEl.style.height = '0%';
+                valueEl.textContent = '0%';
+                virtualState[stateKey] = 0;
+                if (gamepadIndex < 0) {
+                    state[stateKey] = 0;
+                }
+            }
+            
+            triggerEl.addEventListener('mousedown', (e) => {
+                active = true;
+                updateValue(e.clientY);
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (active) updateValue(e.clientY);
+            });
+            
+            document.addEventListener('mouseup', () => {
+                if (active) {
+                    active = false;
+                    reset();
+                }
+            });
+            
+            triggerEl.addEventListener('touchstart', (e) => {
+                active = true;
+                updateValue(e.touches[0].clientY);
+                e.preventDefault();
+            });
+            
+            document.addEventListener('touchmove', (e) => {
+                if (active) updateValue(e.touches[0].clientY);
+            });
+            
+            document.addEventListener('touchend', () => {
+                if (active) {
+                    active = false;
+                    reset();
+                }
+            });
+        }
+        
+        // Virtual button handling
+        function setupButtons() {
+            document.querySelectorAll('.btn[data-btn], .bumper-btn[data-btn]').forEach(btn => {
+                const key = btn.dataset.btn;
+                
+                const activate = () => {
+                    btn.classList.add('active');
+                    state[key] = true;
+                };
+                
+                const deactivate = () => {
+                    btn.classList.remove('active');
+                    state[key] = false;
+                };
+                
+                btn.addEventListener('mousedown', activate);
+                btn.addEventListener('mouseup', deactivate);
+                btn.addEventListener('mouseleave', deactivate);
+                btn.addEventListener('touchstart', (e) => { activate(); e.preventDefault(); });
+                btn.addEventListener('touchend', deactivate);
+            });
+        }
+        
+        // Physical gamepad handling
+        window.addEventListener('gamepadconnected', (e) => {
+            gamepadIndex = e.gamepad.index;
+            physicalGamepad = e.gamepad;
+            gamepadInfo.textContent = `✓ ${e.gamepad.id}`;
+            gamepadInfo.classList.add('active');
+            console.log('Gamepad connected:', e.gamepad.id);
+        });
+        
+        window.addEventListener('gamepaddisconnected', (e) => {
+            if (e.gamepad.index === gamepadIndex) {
+                gamepadIndex = -1;
+                physicalGamepad = null;
+                gamepadInfo.textContent = 'Gamepad disconnected';
+                gamepadInfo.classList.remove('active');
+            }
+        });
+        
+        function pollGamepad() {
+            if (gamepadIndex >= 0) {
+                const gp = navigator.getGamepads()[gamepadIndex];
+                if (gp) {
+                    // Axes (Xbox-style mapping)
+                    state.left_x = applyDeadzone(gp.axes[0] || 0);
+                    state.left_y = applyDeadzone(gp.axes[1] || 0);
+                    state.right_x = applyDeadzone(gp.axes[2] || 0);
+                    state.right_y = applyDeadzone(gp.axes[3] || 0);
+                    
+                    // Triggers
+                    state.left_trigger = Math.max(0, gp.buttons[6]?.value || 0);
+                    state.right_trigger = Math.max(0, gp.buttons[7]?.value || 0);
+                    
+                    // Buttons
+                    state.button_a = gp.buttons[0]?.pressed || false;
+                    state.button_b = gp.buttons[1]?.pressed || false;
+                    state.button_x = gp.buttons[2]?.pressed || false;
+                    state.button_y = gp.buttons[3]?.pressed || false;
+                    state.button_lb = gp.buttons[4]?.pressed || false;
+                    state.button_rb = gp.buttons[5]?.pressed || false;
+                    
+                    // D-pad
+                    state.dpad_up = gp.buttons[12]?.pressed || false;
+                    state.dpad_down = gp.buttons[13]?.pressed || false;
+                    state.dpad_left = gp.buttons[14]?.pressed || false;
+                    state.dpad_right = gp.buttons[15]?.pressed || false;
+                }
+            } else {
+                // Use virtual joystick values when no physical gamepad
+                state.left_x = virtualState.left_x;
+                state.left_y = virtualState.left_y;
+                state.right_x = virtualState.right_x;
+                state.right_y = virtualState.right_y;
+                state.left_trigger = virtualState.left_trigger;
+                state.right_trigger = virtualState.right_trigger;
+            }
+            
+            // Update debug display
+            debugValues.innerHTML = `
+                <span>LX: ${state.left_x.toFixed(2)}</span>
+                <span>LY: ${state.left_y.toFixed(2)}</span>
+                <span>RX: ${state.right_x.toFixed(2)}</span>
+                <span>RY: ${state.right_y.toFixed(2)}</span>
+                <span>LT: ${state.left_trigger.toFixed(2)}</span>
+                <span>RT: ${state.right_trigger.toFixed(2)}</span>
+            `;
+            
+            // Update virtual trigger display to match physical
+            if (gamepadIndex >= 0) {
+                document.getElementById('leftTriggerFill').style.height = `${state.left_trigger * 100}%`;
+                document.getElementById('leftTriggerValue').textContent = `${Math.round(state.left_trigger * 100)}%`;
+                document.getElementById('rightTriggerFill').style.height = `${state.right_trigger * 100}%`;
+                document.getElementById('rightTriggerValue').textContent = `${Math.round(state.right_trigger * 100)}%`;
+            }
+            
+            sendState();
+        }
+        
+        function applyDeadzone(value, deadzone = 0.1) {
+            if (Math.abs(value) < deadzone) return 0;
+            return value;
+        }
+        
+        // Initialize
+        function init() {
+            connect();
+            initThreeJS();
+            
+            // Setup virtual joysticks
+            setupJoystick(
+                document.getElementById('leftJoystick'),
+                document.getElementById('leftKnob'),
+                (x, y) => {
+                    if (gamepadIndex < 0) {
+                        state.left_x = x;
+                        state.left_y = y;
+                    }
+                },
+                'left_x', 'left_y'
+            );
+            
+            setupJoystick(
+                document.getElementById('rightJoystick'),
+                document.getElementById('rightKnob'),
+                (x, y) => {
+                    if (gamepadIndex < 0) {
+                        state.right_x = x;
+                        state.right_y = y;
+                    }
+                },
+                'right_x', 'right_y'
+            );
+            
+            // Setup triggers
+            setupTrigger(
+                document.getElementById('leftTrigger'),
+                document.getElementById('leftTriggerFill'),
+                document.getElementById('leftTriggerValue'),
+                'left_trigger'
+            );
+            
+            setupTrigger(
+                document.getElementById('rightTrigger'),
+                document.getElementById('rightTriggerFill'),
+                document.getElementById('rightTriggerValue'),
+                'right_trigger'
+            );
+            
+            // Setup buttons
+            setupButtons();
+            
+            // Main loop - poll gamepad and send state at 60Hz
+            setInterval(pollGamepad, 16);
+        }
+        
+        init();
+    </script>
+</body>
+</html>

@@ -1,12 +1,10 @@
-"""Rerun visualization for teleoperation."""
+"""Rerun visualization for teleoperation (local viewer only)."""
 
-import io
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import rerun as rr
-import rerun.blueprint as rrb
 
 from lerobot.model.kinematics import RobotKinematics
 from teleop_controller import IK_JOINT_NAMES
@@ -24,25 +22,13 @@ KINEMATIC_CHAIN = [
 
 
 class RerunVisualizer:
-    """Handles Rerun visualization for SO101 robot."""
+    """Handles Rerun visualization for SO101 robot (local viewer only)."""
     
-    def __init__(self, urdf_path: str, compress_images: bool = False, minimal: bool = False):
+    def __init__(self, urdf_path: str):
         self.urdf_path = Path(urdf_path)
         self.urdf_prefix = self.urdf_path.stem  # Derive from filename
         self._joint_paths = self._build_joint_paths()
         self._initialized = False
-        self._compress_images = compress_images
-        self._minimal = minimal  # Only log camera + robot pose
-    
-    def get_blueprint(self) -> rrb.Blueprint:
-        """Create a minimal blueprint showing only camera and 3D robot view."""
-        return rrb.Blueprint(
-            rrb.Horizontal(
-                rrb.Spatial2DView(name="Camera", origin="camera"),
-                rrb.Spatial3DView(name="Robot", origin=self.urdf_prefix),
-            ),
-            collapse_panels=True,
-        )
     
     def _build_joint_paths(self) -> dict:
         """Build Rerun entity paths from kinematic chain."""
@@ -81,25 +67,14 @@ class RerunVisualizer:
     def log_frame(self, teleop, kinematics_solver: RobotKinematics, robot_obs: dict,
                   joint_action: Optional[dict], gamepad, camera_image: Optional[np.ndarray] = None):
         try:
-            # Camera (compressed JPEG for remote, raw for local)
+            # Camera
             if camera_image is not None:
                 rotated = np.rot90(camera_image, k=-1)
-                if self._compress_images:
-                    from PIL import Image
-                    img = Image.fromarray(rotated)
-                    buf = io.BytesIO()
-                    img.save(buf, format='JPEG', quality=70)
-                    rr.log("camera/image", rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"))
-                else:
-                    rr.log("camera/image", rr.Image(rotated))
+                rr.log("camera/image", rr.Image(rotated))
             
             # Joint angles for robot visualization
             if robot_obs:
                 self._log_joint_angles(robot_obs)
-            
-            # Skip the rest in minimal mode
-            if self._minimal:
-                return
             
             # EE poses
             obs_pos, obs_rot = self.get_observed_ee_pose(kinematics_solver, robot_obs)
@@ -158,6 +133,7 @@ class RerunVisualizer:
         rr.log(path, rr.Transform3D(translation=pos, mat3x3=rot))
         rr.log(f"{path}/point", rr.Points3D([[0, 0, 0]], colors=[color], radii=[radius]))
         a = int(alpha * 255)
-        colors = [[255, 0, 0, a], [0, 255, 0, a], [0, 0, 255, a]]
-        rr.log(f"{path}/frame", rr.Arrows3D(
-            origins=np.zeros((3, 3)), vectors=np.eye(3) * axis_len, colors=colors))
+        origins = [[0, 0, 0]] * 3
+        vectors = [[axis_len, 0, 0], [0, axis_len, 0], [0, 0, axis_len]]
+        colors_with_alpha = [[255, 0, 0, a], [0, 255, 0, a], [0, 0, 255, a]]
+        rr.log(f"{path}/axes", rr.Arrows3D(origins=origins, vectors=vectors, colors=colors_with_alpha))
