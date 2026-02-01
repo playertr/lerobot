@@ -1,9 +1,9 @@
 """MuJoCo simulation HAL for SO101 gamepad teleoperation."""
 
+import os
 from pathlib import Path
 
 import mujoco
-import mujoco.viewer
 import numpy as np
 
 from teleop_utils import RobotHAL
@@ -48,11 +48,13 @@ class SimulationHAL(RobotHAL):
     
     MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
     
-    def __init__(self, cfg, base_dir: Path):
+    def __init__(self, cfg, base_dir: Path, headless: bool = False):
         self.cfg = cfg
         self.base_dir = base_dir
+        self.headless = headless
         self.model = self.data = self.viewer = None
         self._target_ee = self._actual_ee = None
+        self._running = True
     
     def connect(self) -> bool:
         xml_path = self.base_dir / self.cfg.xml_path if not Path(self.cfg.xml_path).is_absolute() else Path(self.cfg.xml_path)
@@ -67,16 +69,23 @@ class SimulationHAL(RobotHAL):
         for i in range(self.model.ngeom):
             self.model.geom_rgba[i, 3] = 0.5
         
-        self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
-        self.viewer.cam.azimuth = 45
-        self.viewer.cam.elevation = -45
-        self.viewer.cam.distance = 1.0
-        self.viewer.cam.lookat[:] = [0.15, 0, 0.1]
+        if self.headless:
+            # Headless mode - no viewer, just physics
+            print("MuJoCo simulation started (headless mode).")
+        else:
+            # GUI mode - launch viewer
+            import mujoco.viewer
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self.viewer.cam.azimuth = 45
+            self.viewer.cam.elevation = -45
+            self.viewer.cam.distance = 1.0
+            self.viewer.cam.lookat[:] = [0.15, 0, 0.1]
+            print("MuJoCo simulation started.")
         
-        print("MuJoCo simulation started.")
         return True
     
     def disconnect(self):
+        self._running = False
         if self.viewer:
             self.viewer.close()
             self.viewer = None
@@ -104,6 +113,8 @@ class SimulationHAL(RobotHAL):
         self.data.ctrl[:] = ctrl
     
     def is_running(self) -> bool:
+        if self.headless:
+            return self._running
         return self.viewer is not None and self.viewer.is_running()
     
     def step(self):
@@ -111,8 +122,10 @@ class SimulationHAL(RobotHAL):
         steps = max(1, int(1 / (self.cfg.control_fps * self.model.opt.timestep)))
         for _ in range(steps):
             mujoco.mj_step(self.model, self.data)
-        self._render_ee_frames()
-        self.viewer.sync()
+        
+        if self.viewer:
+            self._render_ee_frames()
+            self.viewer.sync()
     
     def render_ee_frames(self, target_pos, target_rot, actual_pos, actual_rot):
         self._target_ee = (target_pos, target_rot)

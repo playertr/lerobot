@@ -40,6 +40,7 @@ from teleop_visualizer import RerunVisualizer
 class TeleoperateConfig:
     """Configuration for gamepad teleoperation."""
     sim: bool = True
+    headless: bool = False  # For servers without display (remote mode auto-enables)
     control_fps: int = 100
     
     # Remote control
@@ -227,7 +228,10 @@ def main(cfg: TeleoperateConfig):
     # Robot HAL
     if cfg.sim:
         from teleoperate_sim import SimulationHAL
-        robot = SimulationHAL(cfg, base_dir)
+        # Auto-enable headless for remote mode on Linux (no DISPLAY)
+        import os
+        headless = cfg.headless or (cfg.remote and not os.environ.get('DISPLAY'))
+        robot = SimulationHAL(cfg, base_dir, headless=headless)
     else:
         from teleoperate_real import RealRobotHAL
         robot = RealRobotHAL(cfg)
