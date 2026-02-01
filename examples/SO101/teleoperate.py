@@ -199,7 +199,8 @@ def main(cfg: TeleoperateConfig):
             from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
             raw = OpenCVCamera(OpenCVCameraConfig(
                 index_or_path=cfg.camera_index, fps=cfg.camera_fps,
-                width=cfg.camera_width, height=cfg.camera_height))
+                width=cfg.camera_width, height=cfg.camera_height,
+                fourcc="MJPG"))  # MJPG is hardware-compressed, much faster than YUYV
             raw.connect()
             camera = ThreadedCameraWrapper(raw)
             camera.start()
