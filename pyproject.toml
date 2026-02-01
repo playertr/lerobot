@@ -82,7 +82,7 @@ dependencies = [
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
-    "rerun-sdk>=0.24.0,<0.27.0",
+    "rerun-sdk==0.26.1",  # Pinned to avoid resolver backtracking
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
@@ -95,7 +95,7 @@ dependencies = [
 
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
-placo-dep = ["placo>=0.9.6,<0.10.0"]
+placo-dep = ["placo==0.9.13"]  # Pinned to avoid cmeel-boost resolver backtracking
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 
@@ -112,8 +112,8 @@ so101 = [
     "lerobot[gamepad]",
     "lerobot[kinematics]",
     "websockets>=12.0,<16.0",
-    "pytransform3d>=3.5.0,<4.0.0",
-    "scipy==1.15.3",  # Pinned - has py3.13 wheels, avoids resolver backtracking
+    "pytransform3d==3.14.3",  # Pinned to avoid resolver backtracking
+    "scipy==1.15.3",  # Pinned - has py3.13 wheels
     "Pillow>=10.0.0,<13.0.0",
     "mujoco>=3.1.0,<4.0.0",
 ]
