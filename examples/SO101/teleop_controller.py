@@ -33,7 +33,6 @@ class TeleoperationController:
         self.ee_position = np.array([cfg.initial_ee_x, cfg.initial_ee_y, cfg.initial_ee_z])
         self.ee_orientation = Rotation.from_euler('xyz', [0, np.pi/2, 0])
         self.gripper_pos = 50.0
-        self.clutch_enabled = False
         self._current_joint_obs = None
     
     @staticmethod
@@ -69,12 +68,7 @@ class TeleoperationController:
         """Process gamepad input and return joint commands."""
         self._current_joint_obs = current_joint_obs
         
-        if gamepad.check_x_pressed():
-            self.clutch_enabled = not self.clutch_enabled
-            print(f"Clutch {'ENABLED' if self.clutch_enabled else 'DISABLED'}")
-        
-        if self.clutch_enabled:
-            self._update_ee_pose(gamepad, dt)
+        self._update_ee_pose(gamepad, dt)
         
         self._clamp_to_bounds()
         self._update_gripper(gamepad, dt)

@@ -4,8 +4,9 @@ import asyncio
 import io
 import json
 import threading
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 import numpy as np
 import websockets
@@ -15,7 +16,17 @@ import socket
 
 
 class WebTeleoperationServer:
-    """Serves web UI and handles WebSocket communication for remote control."""
+    """Serves web UI and handles WebSocket communication for remote control.
+    
+    Safety features:
+    - Robot starts disabled (limp)
+    - Only one client can control at a time (first to request control)
+    - If controlling client disconnects for >3 seconds, robot is disabled
+    - Enable/disable requires explicit user action via web UI
+    """
+    
+    # Timeout before disabling robot after controlling client disconnects
+    DISCONNECT_TIMEOUT_S = 3.0
     
     def __init__(self, host: str = "localhost", web_port: int = 8888, 
                  display_host: str = None, urdf_path: str = "so101_new_calib.urdf"):
@@ -54,6 +65,61 @@ class WebTeleoperationServer:
         self._http_thread = None
         self._ws_thread = None
         self._loop = None
+        
+        # Safety: Robot enable state
+        self._robot_enabled = False
+        self._enable_callback: Optional[Callable[[], None]] = None
+        self._disable_callback: Optional[Callable[[], None]] = None
+        
+        # Multi-client control: only one client can control at a time
+        self._controlling_client = None  # WebSocket of the client with control
+        self._controlling_client_addr = None  # Address for logging
+        self._last_controller_activity = 0.0  # Timestamp of last activity from controller
+        self._disconnect_check_task = None
+    
+    def set_enable_callback(self, callback: Callable[[], None]):
+        """Set callback to enable robot torque."""
+        self._enable_callback = callback
+    
+    def set_disable_callback(self, callback: Callable[[], None]):
+        """Set callback to disable robot torque."""
+        self._disable_callback = callback
+    
+    @property
+    def robot_enabled(self) -> bool:
+        return self._robot_enabled
+    
+    def _enable_robot(self):
+        """Enable robot torque (called from controlling client)."""
+        if not self._robot_enabled:
+            self._robot_enabled = True
+            if self._enable_callback:
+                self._enable_callback()
+            self._broadcast_enable_state()
+    
+    def _disable_robot(self, reason: str = ""):
+        """Disable robot torque."""
+        if self._robot_enabled:
+            self._robot_enabled = False
+            if self._disable_callback:
+                self._disable_callback()
+            if reason:
+                print(f"[Safety] Robot disabled: {reason}")
+            self._broadcast_enable_state()
+    
+    def _broadcast_enable_state(self):
+        """Send current enable state to all clients."""
+        if self._loop and self._connected_clients:
+            controlling_addr = str(self._controlling_client_addr) if self._controlling_client_addr else None
+            message = json.dumps({
+                "type": "enable_state",
+                "enabled": self._robot_enabled,
+                "controlling_client": controlling_addr,
+            })
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_text(message),
+                self._loop
+            )
     
     def get_gamepad_state(self) -> dict:
         """Get current gamepad state (thread-safe)."""
@@ -96,8 +162,8 @@ class WebTeleoperationServer:
             self._loop
         )
     
-    def send_ee_state(self, target_pos, target_rot, clutch_enabled: bool):
-        """Send EE target pose and clutch state to web clients for visualization."""
+    def send_ee_state(self, target_pos, target_rot):
+        """Send EE target pose to web clients for visualization."""
         if not self._connected_clients or self._loop is None:
             return
         
@@ -106,7 +172,7 @@ class WebTeleoperationServer:
             "type": "ee_state",
             "target_pos": target_pos.tolist(),
             "target_rot": target_rot.tolist(),  # 3x3 rotation matrix
-            "clutch": clutch_enabled
+            "robot_enabled": self._robot_enabled,
         })
         
         asyncio.run_coroutine_threadsafe(
@@ -130,6 +196,28 @@ class WebTeleoperationServer:
                 return_exceptions=True
             )
     
+    async def _send_to_client(self, websocket, message: str):
+        """Send message to a specific client."""
+        try:
+            await websocket.send(message)
+        except Exception:
+            pass
+    
+    async def _check_controller_disconnect(self):
+        """Background task to check if controlling client has timed out."""
+        while True:
+            await asyncio.sleep(0.5)  # Check every 500ms
+            
+            if self._controlling_client is not None and self._robot_enabled:
+                # Check if the controlling client is still connected
+                if self._controlling_client not in self._connected_clients:
+                    elapsed = time.time() - self._last_controller_activity
+                    if elapsed >= self.DISCONNECT_TIMEOUT_S:
+                        print(f"[Safety] Controlling client disconnected for {elapsed:.1f}s")
+                        self._disable_robot(f"Controlling client disconnected for {elapsed:.1f}s")
+                        self._controlling_client = None
+                        self._controlling_client_addr = None
+    
     async def _handle_websocket(self, websocket):
         """Handle incoming WebSocket connection."""
         client_addr = websocket.remote_address
@@ -137,16 +225,69 @@ class WebTeleoperationServer:
         self._connected_clients.add(websocket)
         
         try:
-            # Send a welcome message to confirm connection is working
-            await websocket.send(json.dumps({"type": "welcome", "message": "Connected to SO101 server"}))
+            # Auto-grant control if no one else has it
+            if self._controlling_client is None:
+                self._controlling_client = websocket
+                self._controlling_client_addr = client_addr
+                self._last_controller_activity = time.time()
+                has_control = True
+                print(f"[Control] {client_addr} automatically granted control")
+            else:
+                has_control = False
+                print(f"[Control] {client_addr} denied - control held by {self._controlling_client_addr}")
+            
+            # Send welcome message with current state
+            controlling_addr = str(self._controlling_client_addr) if self._controlling_client_addr else None
+            await websocket.send(json.dumps({
+                "type": "welcome",
+                "message": "Connected to SO101 server",
+                "robot_enabled": self._robot_enabled,
+                "controlling_client": controlling_addr,
+                "you_have_control": has_control,
+            }))
             print(f"[Web] Sent welcome to {client_addr}")
+            
+            # If denied, send explicit rejection message
+            if not has_control:
+                await websocket.send(json.dumps({
+                    "type": "control_denied",
+                    "message": f"Another client ({self._controlling_client_addr}) is already in control. Only one controller allowed at a time."
+                }))
             
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    if data.get("type") == "gamepad":
-                        with self._lock:
-                            self._gamepad_state.update(data.get("state", {}))
+                    msg_type = data.get("type")
+                    
+                    if msg_type == "gamepad":
+                        # Only accept gamepad input from controlling client
+                        if self._controlling_client == websocket:
+                            with self._lock:
+                                self._gamepad_state.update(data.get("state", {}))
+                            self._last_controller_activity = time.time()
+                    
+                    elif msg_type == "enable_robot":
+                        # Only controlling client can enable
+                        if self._controlling_client == websocket:
+                            self._enable_robot()
+                            self._last_controller_activity = time.time()
+                        else:
+                            await websocket.send(json.dumps({
+                                "type": "error",
+                                "message": "You don't have control. Request control first."
+                            }))
+                    
+                    elif msg_type == "disable_robot":
+                        # Only controlling client can disable
+                        if self._controlling_client == websocket:
+                            self._disable_robot(f"Disabled by {client_addr}")
+                            self._last_controller_activity = time.time()
+                        else:
+                            await websocket.send(json.dumps({
+                                "type": "error", 
+                                "message": "You don't have control."
+                            }))
+                    
                 except json.JSONDecodeError:
                     print(f"[Web] Invalid JSON from {client_addr}: {message[:100]}")
             
@@ -160,6 +301,16 @@ class WebTeleoperationServer:
         finally:
             print(f"[Web] Client disconnected: {client_addr}")
             self._connected_clients.discard(websocket)
+            
+            # If this was the controlling client, release control so next client can take it
+            if self._controlling_client == websocket:
+                # Disable robot for safety
+                if self._robot_enabled:
+                    self._disable_robot(f"Controlling client {client_addr} disconnected")
+                self._controlling_client = None
+                self._controlling_client_addr = None
+                print(f"[Control] Control released by {client_addr} - available for next client")
+            
             # Reset gamepad state on disconnect
             with self._lock:
                 for key in self._gamepad_state:
@@ -171,6 +322,10 @@ class WebTeleoperationServer:
     async def _run_websocket_server(self):
         """Run the WebSocket server."""
         self._loop = asyncio.get_event_loop()
+        
+        # Start background task to check for controller disconnect timeout
+        self._disconnect_check_task = asyncio.create_task(self._check_controller_disconnect())
+        
         # Increase ping timeout for mobile clients with higher latency
         async with serve(
             self._handle_websocket, 

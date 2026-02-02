@@ -170,7 +170,10 @@ class OpenCVCamera(Camera):
         if warmup and self.warmup_s > 0:
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.async_read(timeout_ms=self.warmup_s * 1000)
+                try:
+                    self.async_read(timeout_ms=self.warmup_s * 1000)
+                except Exception:
+                    pass  # Warmup failures are expected initially
                 time.sleep(0.1)
             with self.frame_lock:
                 if self.latest_frame is None:
@@ -234,9 +237,11 @@ class OpenCVCamera(Camera):
 
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
-        # Use math.isclose for robust float comparison
-        if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+        # Use math.isclose for robust float comparison - only fail if actual value doesn't match
+        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+        if not success:
+            logger.warning(f"{self} set() returned False for FPS, but actual value matches ({actual_fps=})")
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
@@ -272,16 +277,21 @@ class OpenCVCamera(Camera):
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not width_success or self.capture_width != actual_width:
+        # Only fail if actual value doesn't match - some backends return False from set() even when successful
+        if self.capture_width != actual_width:
             raise RuntimeError(
                 f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
             )
+        if not width_success:
+            logger.warning(f"{self} set() returned False for width, but actual value matches ({actual_width=})")
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not height_success or self.capture_height != actual_height:
+        if self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
             )
+        if not height_success:
+            logger.warning(f"{self} set() returned False for height, but actual value matches ({actual_height=})")
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:

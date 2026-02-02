@@ -7,7 +7,6 @@ Usage:
     mjpython teleoperate.py --remote=True      # Remote control via web UI (mobile-friendly)
 
 Controls:
-    X Button:        Toggle CLUTCH (enable/disable motion)
     Left Stick X:    Arc sweep around base
     Left Stick Y:    Move up/down
     Right Stick:     Pitch + Roll
@@ -21,6 +20,8 @@ Requirements:
 """
 
 import time
+import signal
+import atexit
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,10 @@ from lerobot.utils.robot_utils import precise_sleep
 from teleop_utils import RobotHAL, ThreadedCameraWrapper
 from teleop_controller import TeleoperationController
 from teleop_visualizer import RerunVisualizer
+
+
+# Global reference for signal handlers
+_cleanup_robot = None
 
 
 @dataclass
@@ -92,9 +97,15 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
     if visualizer:
         visualizer.init_visualization()
     
-    print("\nPress X to enable CLUTCH, then use the gamepad to move the robot.\n")
+    if cfg.remote:
+        print("\n[Safety] Robot starts DISABLED (limp). Use web UI to:")
+        print("  1. Click 'Enable Robot' to power the arm")
+        print("  2. Use the gamepad to move the robot\n")
+    else:
+        print("\nUse the gamepad to move the robot.\n")
     
     last_time = time.perf_counter()
+    was_torque_enabled = getattr(robot, 'torque_enabled', True)  # Track previous state
     
     try:
         while robot.is_running():
@@ -102,12 +113,25 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
             actual_dt = min(t0 - last_time, 0.1)
             last_time = t0
             
+            # Apply any pending torque state changes from web thread
+            if hasattr(robot, 'apply_pending_torque'):
+                robot.apply_pending_torque()
+            
+            # Check for torque state transition: disabled -> enabled
+            # Reset EE target to current observed pose to prevent sudden jumps
+            is_torque_enabled = getattr(robot, 'torque_enabled', True)
+            if is_torque_enabled and not was_torque_enabled:
+                robot_obs = robot.get_observation()
+                teleop.initialize_from_observation(robot_obs)
+                print("[Safety] EE target reset to current position on enable")
+            was_torque_enabled = is_torque_enabled
+            
             gamepad.update()
             
             robot_obs = robot.get_observation()
             joint_action = teleop.update(gamepad, actual_dt, current_joint_obs=robot_obs)
             
-            if joint_action and teleop.clutch_enabled:
+            if joint_action:
                 robot.send_action(joint_action)
             
             target_pos, target_rot = teleop.get_ee_pose()
@@ -115,7 +139,7 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
             robot.render_ee_frames(target_pos, target_rot, target_pos, target_rot)
             
             camera_image = camera.get_latest_frame() if camera else None
-            
+
             # Stream to web clients (at reduced rate)
             if web_server and t0 - last_stream_time >= stream_interval:
                 last_stream_time = t0
@@ -128,7 +152,7 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
                     joint_positions = {k.replace('.pos', ''): v for k, v in robot_obs.items() if k.endswith('.pos')}
                     web_server.send_joint_positions(joint_positions)
                 # Stream EE target pose for visualization
-                web_server.send_ee_state(target_pos, target_rot, teleop.clutch_enabled)
+                web_server.send_ee_state(target_pos, target_rot)
             
             # Log to Rerun (local visualization only in non-remote mode)
             if visualizer:
@@ -146,6 +170,8 @@ def run_control_loop(cfg: TeleoperateConfig, robot: RobotHAL, gamepad,
 @draccus.wrap()
 def main(cfg: TeleoperateConfig):
     """Main entry point."""
+    global _cleanup_robot
+    
     base_dir = Path(__file__).parent
     urdf_path = base_dir / cfg.urdf_path if not Path(cfg.urdf_path).is_absolute() else Path(cfg.urdf_path)
     
@@ -197,14 +223,15 @@ def main(cfg: TeleoperateConfig):
     if cfg.camera_index is not None:
         try:
             from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+            # Use device path instead of index for more reliable access on Linux
+            camera_path = f"/dev/video{cfg.camera_index}" if isinstance(cfg.camera_index, int) else cfg.camera_index
             raw = OpenCVCamera(OpenCVCameraConfig(
-                index_or_path=cfg.camera_index, fps=cfg.camera_fps,
-                width=cfg.camera_width, height=cfg.camera_height,
-                fourcc="MJPG"))  # MJPG is hardware-compressed, much faster than YUYV
+                index_or_path=camera_path, fps=cfg.camera_fps,
+                width=cfg.camera_width, height=cfg.camera_height))
             raw.connect()
             camera = ThreadedCameraWrapper(raw)
             camera.start()
-            print(f"Camera {cfg.camera_index} connected")
+            print(f"Camera {camera_path} connected")
         except Exception as e:
             print(f"Camera failed: {e}")
     
@@ -243,9 +270,38 @@ def main(cfg: TeleoperateConfig):
             camera.disconnect()
         return
     
+    # Safety: Set up signal handlers and atexit for graceful shutdown
+    # This ensures torque is disabled even on SIGTERM/SIGINT
+    def cleanup_on_exit():
+        """Ensure robot is disabled on exit."""
+        print("\n[Safety] Cleanup: disabling robot torque...")
+        if hasattr(robot, 'disable_torque'):
+            robot.disable_torque()
+    
+    _cleanup_robot = cleanup_on_exit
+    atexit.register(cleanup_on_exit)
+    
+    def signal_handler(signum, frame):
+        """Handle SIGTERM/SIGINT gracefully."""
+        print(f"\n[Safety] Received signal {signum}, shutting down...")
+        cleanup_on_exit()
+        raise SystemExit(0)
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Wire up web server safety callbacks (for real robot only)
+    # Use request_* methods for thread safety - actual changes applied in main loop
+    if web_server and hasattr(robot, 'request_enable_torque'):
+        web_server.set_enable_callback(robot.request_enable_torque)
+        web_server.set_disable_callback(robot.request_disable_torque)
+    
     try:
         run_control_loop(cfg, robot, gamepad, teleop, kinematics_solver, visualizer, camera, web_server)
     finally:
+        # Ensure cleanup runs
+        if hasattr(robot, 'disable_torque'):
+            robot.disable_torque()
         robot.disconnect()
         if hasattr(gamepad, 'disconnect'):
             gamepad.disconnect()
