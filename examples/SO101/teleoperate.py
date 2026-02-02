@@ -223,15 +223,13 @@ def main(cfg: TeleoperateConfig):
     if cfg.camera_index is not None:
         try:
             from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-            # Use device path instead of index for more reliable access on Linux
-            camera_path = f"/dev/video{cfg.camera_index}" if isinstance(cfg.camera_index, int) else cfg.camera_index
             raw = OpenCVCamera(OpenCVCameraConfig(
-                index_or_path=camera_path, fps=cfg.camera_fps,
+                index_or_path=cfg.camera_index, fps=cfg.camera_fps,
                 width=cfg.camera_width, height=cfg.camera_height))
             raw.connect()
             camera = ThreadedCameraWrapper(raw)
             camera.start()
-            print(f"Camera {camera_path} connected")
+            print(f"Camera {cfg.camera_index} connected")
         except Exception as e:
             print(f"Camera failed: {e}")
     
@@ -269,6 +267,11 @@ def main(cfg: TeleoperateConfig):
         if camera:
             camera.disconnect()
         return
+    
+    # For non-remote mode, auto-enable torque after connection
+    # In remote mode, user must enable via web UI for safety
+    if not cfg.remote and hasattr(robot, 'enable_torque'):
+        robot.enable_torque()
     
     # Safety: Set up signal handlers and atexit for graceful shutdown
     # This ensures torque is disabled even on SIGTERM/SIGINT
