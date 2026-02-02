@@ -223,13 +223,19 @@ def main(cfg: TeleoperateConfig):
     if cfg.camera_index is not None:
         try:
             from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+            # Use integer index for macOS, device path for Linux
+            import platform
+            if platform.system() == "Darwin":
+                camera_path = cfg.camera_index  # macOS uses integer index
+            else:
+                camera_path = f"/dev/video{cfg.camera_index}" if isinstance(cfg.camera_index, int) else cfg.camera_index
             raw = OpenCVCamera(OpenCVCameraConfig(
-                index_or_path=cfg.camera_index, fps=cfg.camera_fps,
+                index_or_path=camera_path, fps=cfg.camera_fps,
                 width=cfg.camera_width, height=cfg.camera_height))
             raw.connect()
             camera = ThreadedCameraWrapper(raw)
             camera.start()
-            print(f"Camera {cfg.camera_index} connected")
+            print(f"Camera {camera_path} connected")
         except Exception as e:
             print(f"Camera failed: {e}")
     
